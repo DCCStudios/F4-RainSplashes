@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "rainsplashesf4se",
+  "version-string": "1.0.0",
+  "dependencies": [
+    "nlohmann-json",
+    "boost-stl-interfaces",
+    "boost-iostreams",
+    "boost-iterator",
+    "boost-predef",
+    "fmt",
+    "frozen",
+    "spdlog",
+    "xbyak",
+    "rsm-mmio"
+  ]
+}
