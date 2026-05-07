@@ -7,6 +7,7 @@ namespace RayCast
 		RE::NiPoint3  hitPos{};
 		RE::NiMatrix3 normal{};
 		bool          hitActor{ false };
+		bool          hitPlayer{ false };
 		bool          hitWater{ false };
 	};
 

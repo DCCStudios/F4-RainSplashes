@@ -18,7 +18,9 @@ struct GlobalSettings
 {
 	bool masterEnabled{ true };
 	bool debugSplashes{ false };
-	float coverThreshold{ 200.0f };
+	float coverThreshold{ 300.0f };
+	bool  spawnOnActors{ false };
+	bool  spawnOnPlayer{ false };
 	float rainDensityLightThreshold{ 5.0f };
 	float rainDensityHeavyThreshold{ 9.0f };
 	float rainProxyWetnessScale{ 20.0f };

@@ -3,6 +3,7 @@
 #include "RayCast.h"
 #include "Settings.h"
 
+#include "F4SE/API.h"
 #include "RE/Bethesda/PlayerCharacter.h"
 #include "RE/Bethesda/TESForms.h"
 #include "RE/NetImmerse/NiAVObject.h"
@@ -286,7 +287,7 @@ RainSplashes::RainDebugInfo RainSplashes::GetRainDebugInfo()
 	return out;
 }
 
-void RainSplashes::TickAfterActorUpdates(float a_delta)
+void RainSplashes::TickOnMainThread(float a_delta)
 {
 	if (!RelSanity::Ok()) {
 		return;
@@ -372,6 +373,9 @@ void RainSplashes::TickAfterActorUpdates(float a_delta)
 		g_loggedSplashPath = true;
 	}
 
+	// CastVerticalCell no longer uses Havok/CellPick — it scans loaded
+	// references for surface height.  Safe to call on any thread.
+	// Only SpawnTempEffect is deferred to the main thread (model loading).
 	for (std::uint32_t i = 0; i < iterations; ++i) {
 		const auto origin = RayCast::RandomPointInDiskAround(radius, playerPos, true);
 		if (!origin) {
@@ -383,6 +387,12 @@ void RainSplashes::TickAfterActorUpdates(float a_delta)
 			continue;
 		}
 		if (out->hitWater) {
+			continue;
+		}
+		if (out->hitPlayer && !s.global.spawnOnPlayer) {
+			continue;
+		}
+		if (out->hitActor && !out->hitPlayer && !s.global.spawnOnActors) {
 			continue;
 		}
 
@@ -397,17 +407,21 @@ void RainSplashes::TickAfterActorUpdates(float a_delta)
 
 		const float dzCover = std::fabs(out->hitPos.z - playerPos.z);
 		if (dzCover > coverThresh) {
+			static std::uint32_t g_coverDrops = 0;
+			if (g_coverDrops < 10) {
+				logger::info("RainSplashesF4SE: cover-filtered dz={:.0f} thresh={:.0f} hitZ={:.0f} playerZ={:.0f}",
+					dzCover, coverThresh, out->hitPos.z, playerPos.z);
+				++g_coverDrops;
+			}
 			continue;
 		}
 
-		// BSTempEffectDebris expects paths WITHOUT "Meshes\" prefix.
-		const char* nifPath;
+		std::string nifPathStr;
 		float       scale;
 		if (debugMarker) {
-			nifPath = "MarkerX.nif";
+			nifPathStr = "MarkerX.nif";
 			scale = 1.0f;
 		} else {
-			// Strip "Meshes\" prefix if present for the TempEffect system.
 			static auto stripMeshesPrefix = [](const std::string& p) -> std::string {
 				if (p.size() > 7) {
 					auto prefix = p.substr(0, 7);
@@ -418,12 +432,24 @@ void RainSplashes::TickAfterActorUpdates(float a_delta)
 				}
 				return p;
 			};
-			static std::string s_nifPath;
-			s_nifPath = stripMeshesPrefix(out->hitActor ? tier->splashNifActor : tier->splashNif);
-			nifPath = s_nifPath.c_str();
+			nifPathStr = stripMeshesPrefix(out->hitActor ? tier->splashNifActor : tier->splashNif);
 			scale = out->hitActor ? tier->splashNifScaleActor : tier->splashNifScale;
 		}
 
-		(void)SpawnTempEffect(cell, out->hitPos, out->normal, scale, nifPath, life);
+		RE::NiPoint3  capturedPos    = out->hitPos;
+		RE::NiMatrix3 capturedNormal = out->normal;
+		float         capturedScale  = scale;
+		float         capturedLife   = life;
+
+		auto* taskIface = F4SE::GetTaskInterface();
+		if (taskIface) {
+			taskIface->AddTask([=]() {
+				auto* player2 = RE::PlayerCharacter::GetSingleton();
+				if (!player2) return;
+				auto* cell2 = player2->GetParentCell();
+				if (!cell2 || cell2->IsInterior()) return;
+				(void)SpawnTempEffect(cell2, capturedPos, capturedNormal, capturedScale, nifPathStr.c_str(), capturedLife);
+			});
+		}
 	}
 }

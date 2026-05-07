@@ -26,7 +26,7 @@ void MessageCallback(F4SE::MessagingInterface::Message* a_msg)
 		RainSplashes::OnGameDataReady();
 		UI::Register();
 		if (!RelSanity::Ok()) {
-			logger::error("RainSplashesF4SE: splashes/hooks disabled until Address Library matches this EXE (menu still opens).");
+			logger::error("RainSplashesF4SE: splashes disabled until Address Library matches this EXE (menu still opens).");
 			break;
 		}
 		F4SE::AllocTrampoline(128);

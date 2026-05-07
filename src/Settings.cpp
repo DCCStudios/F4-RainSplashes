@@ -65,6 +65,8 @@ bool Settings::LoadFromFile(const std::string& a_path)
 	global.masterEnabled = ini.GetBoolValue("Global", "MasterEnabled", global.masterEnabled);
 	global.debugSplashes = ini.GetBoolValue("Global", "DebugSplashes", global.debugSplashes);
 	global.coverThreshold = static_cast<float>(ini.GetDoubleValue("Global", "CoverThreshold", global.coverThreshold));
+	global.spawnOnActors = ini.GetBoolValue("Global", "SpawnOnActors", global.spawnOnActors);
+	global.spawnOnPlayer = ini.GetBoolValue("Global", "SpawnOnPlayer", global.spawnOnPlayer);
 	global.rainDensityLightThreshold = static_cast<float>(ini.GetDoubleValue("Global", "RainDensityLightThreshold", global.rainDensityLightThreshold));
 	global.rainDensityHeavyThreshold = static_cast<float>(ini.GetDoubleValue("Global", "RainDensityHeavyThreshold", global.rainDensityHeavyThreshold));
 	global.rainProxyWetnessScale = static_cast<float>(ini.GetDoubleValue("Global", "RainProxyWetnessScale", global.rainProxyWetnessScale));
@@ -86,6 +88,8 @@ bool Settings::SaveToFile(const std::string& a_path) const
 	ini.SetBoolValue("Global", "MasterEnabled", global.masterEnabled);
 	ini.SetBoolValue("Global", "DebugSplashes", global.debugSplashes);
 	ini.SetDoubleValue("Global", "CoverThreshold", global.coverThreshold);
+	ini.SetBoolValue("Global", "SpawnOnActors", global.spawnOnActors);
+	ini.SetBoolValue("Global", "SpawnOnPlayer", global.spawnOnPlayer);
 	ini.SetDoubleValue("Global", "RainDensityLightThreshold", global.rainDensityLightThreshold);
 	ini.SetDoubleValue("Global", "RainDensityHeavyThreshold", global.rainDensityHeavyThreshold);
 	ini.SetDoubleValue("Global", "RainProxyWetnessScale", global.rainProxyWetnessScale);

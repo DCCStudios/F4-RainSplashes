@@ -106,6 +106,16 @@ namespace
 				"Higher = stricter: fewer splashes under bridges / overhangs.");
 		}
 
+		ImGuiMCP::Checkbox("Spawn on actors", &s.global.spawnOnActors);
+		if (ImGuiMCP::IsItemHovered()) {
+			ImGuiMCP::SetTooltip("When enabled, rain splashes can appear on NPCs and creatures.");
+		}
+		ImGuiMCP::SameLine();
+		ImGuiMCP::Checkbox("Spawn on player", &s.global.spawnOnPlayer);
+		if (ImGuiMCP::IsItemHovered()) {
+			ImGuiMCP::SetTooltip("When enabled, rain splashes can appear on the player character.");
+		}
+
 		ImGuiMCP::Separator();
 
 		if (ImGuiMCP::Button("Save settings to INI")) {

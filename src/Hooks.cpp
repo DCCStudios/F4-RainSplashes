@@ -8,8 +8,6 @@
 
 namespace
 {
-	// Same per-frame call site used by Full Body Awareness F4SE / FPCameraOverhaul:
-	// RunActorUpdates — after the engine finishes actor updates for the frame.
 	using RunActorUpdatesFn = void (*)(void*, float, bool);
 	REL::Relocation<std::uintptr_t> kRunActorUpdates{ REL::ID(556439), 0x17 };
 	RunActorUpdatesFn               g_origRunActorUpdates{ nullptr };
@@ -20,7 +18,7 @@ namespace
 		if (g_origRunActorUpdates) {
 			g_origRunActorUpdates(a_list, a_delta, a_instant);
 		}
-		RainSplashes::TickAfterActorUpdates(a_delta);
+		RainSplashes::TickOnMainThread(a_delta);
 	}
 }
 

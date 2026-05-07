@@ -10,8 +10,9 @@ namespace RainSplashes
 	void OnGameDataReady();
 	void OnPostLoadGame();
 
-	// Called from RunActorUpdates hook (after engine actor updates).
-	void TickAfterActorUpdates(float a_delta);
+	// Called from RunActorUpdates hook — lightweight checks only (no Havok).
+	// Raycasts + spawning are deferred to the main thread via AddTask.
+	void TickOnMainThread(float a_delta);
 
 	std::string GetIniPath();
 
