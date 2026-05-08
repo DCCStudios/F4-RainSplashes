@@ -49,6 +49,8 @@ namespace
 		{ 1225688,  "BSModelDB::Demand (splash mesh load)" },
 		{ 1075623,  "BSTempEffectDebris ctor" },
 		{ 1569706,  "ProcessLists singleton" },
+		{ 445210,   "TESObjectCELL::GetDataX (terrain grid)" },
+		{ 1322816,  "TESObjectCELL::GetDataY (terrain grid)" },
 	};
 
 	[[nodiscard]] bool LoadTable()

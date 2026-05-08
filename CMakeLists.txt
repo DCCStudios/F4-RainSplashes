@@ -49,6 +49,7 @@ set(SOURCES
 	src/RelSanity.cpp
 	src/RainSplashes.cpp
 	src/RayCast.cpp
+	src/TerrainHeight.cpp
 	src/Settings.cpp
 	src/PluginPaths.cpp
 	src/WeatherOverrides.cpp
@@ -61,6 +62,7 @@ set(HEADERS
 	src/RelSanity.h
 	src/RainSplashes.h
 	src/RayCast.h
+	src/TerrainHeight.h
 	src/Settings.h
 	src/PluginPaths.h
 	src/WeatherOverrides.h

@@ -1,10 +1,13 @@
 #include "RayCast.h"
 
+#include "TerrainHeight.h"
+
 #include "shim/MainShim.h"
 #include "shim/NiCameraShim.h"
 #include "RE/NetImmerse/NiMatrix3.h"
 
 #include <cmath>
+#include <limits>
 
 namespace
 {
@@ -25,6 +28,26 @@ namespace
 			return false;
 		}
 		return a_pos.z < a_cell->waterHeight;
+	}
+
+	[[nodiscard]] bool VecFinite(const RE::NiPoint3& a_v)
+	{
+		return std::isfinite(a_v.x) && std::isfinite(a_v.y) && std::isfinite(a_v.z);
+	}
+
+	[[nodiscard]] bool BoundsReasonable(const RE::NiPoint3& a_min, const RE::NiPoint3& a_max)
+	{
+		if (!VecFinite(a_min) || !VecFinite(a_max)) {
+			return false;
+		}
+		constexpr float kHuge = 100000.0f;
+		if (a_max.x < a_min.x || a_max.y < a_min.y || a_max.z < a_min.z) {
+			return false;
+		}
+		if ((a_max.x - a_min.x) > kHuge || (a_max.y - a_min.y) > kHuge || (a_max.z - a_min.z) > kHuge) {
+			return false;
+		}
+		return true;
 	}
 }
 
@@ -59,47 +82,81 @@ namespace RayCast
 		const float playerX = player->data.location.x;
 		const float playerY = player->data.location.y;
 
-		// No Havok raycasting — scan loaded references for the best surface
-		// height at this XY.  This avoids all bhkWorld threading issues.
+		const float terrainZ = TerrainHeight::SampleTerrainHeight(a_cell, a_xyOrigin.x, a_xyOrigin.y, playerZ);
+
 		Output out{};
 		out.hitPos.x = a_xyOrigin.x;
 		out.hitPos.y = a_xyOrigin.y;
-		out.hitPos.z = playerZ;
 
-		constexpr float kRefScanRadius = 128.0f;
-		constexpr float kRefScanRadiusSq = kRefScanRadius * kRefScanRadius;
-		float bestDist2 = kRefScanRadiusSq;
-		bool  foundRef = false;
+		constexpr float kFootprintEps = 3.0f;
+		constexpr float kVertVsPlayer = 500.0f;
+
+		float                       bestTopZ = std::numeric_limits<float>::lowest();
+		const RE::TESObjectREFR*  winnerRef = nullptr;
 
 		auto& refs = a_cell->references;
 		for (std::uint32_t i = 0; i < refs.size(); ++i) {
 			auto* ref = refs[i].get();
-			if (!ref) continue;
+			if (!ref) {
+				continue;
+			}
 
-			const float dx = ref->data.location.x - a_xyOrigin.x;
-			const float dy = ref->data.location.y - a_xyOrigin.y;
-			const float d2 = dx * dx + dy * dy;
-			if (d2 >= bestDist2) continue;
+			const RE::NiPoint3 bmin = ref->GetBoundMin();
+			const RE::NiPoint3 bmax = ref->GetBoundMax();
+			if (!BoundsReasonable(bmin, bmax)) {
+				continue;
+			}
 
-			const float refZ = ref->data.location.z;
-			const float dzFromPlayer = refZ - playerZ;
-			if (dzFromPlayer < -500.0f || dzFromPlayer > 500.0f) continue;
+			const float lx = ref->data.location.x;
+			const float ly = ref->data.location.y;
+			const float lz = ref->data.location.z;
 
-			bestDist2 = d2;
-			out.hitPos.z = refZ;
-			foundRef = true;
+			const float wx0 = lx + bmin.x;
+			const float wx1 = lx + bmax.x;
+			const float wy0 = ly + bmin.y;
+			const float wy1 = ly + bmax.y;
+
+			if (a_xyOrigin.x < wx0 - kFootprintEps || a_xyOrigin.x > wx1 + kFootprintEps) {
+				continue;
+			}
+			if (a_xyOrigin.y < wy0 - kFootprintEps || a_xyOrigin.y > wy1 + kFootprintEps) {
+				continue;
+			}
+
+			float topZ = lz + bmax.z;
 
 			if (ref->GetFormType() == RE::ENUM_FORM_ID::kACHR) {
-				out.hitActor = true;
-				const float pdx = refZ - playerZ;
-				const float pdx2 = ref->data.location.x - playerX;
-				const float pdy2 = ref->data.location.y - playerY;
+				const float actorH = ref->GetActorHeightOrRefBound();
+				if (std::isfinite(actorH) && actorH > 0.0f) {
+					topZ = std::max(topZ, lz + actorH);
+				}
+			}
+
+			if (std::fabs(topZ - playerZ) > kVertVsPlayer) {
+				continue;
+			}
+
+			if (topZ > bestTopZ) {
+				bestTopZ = topZ;
+				winnerRef = ref;
+			}
+		}
+
+		if (winnerRef != nullptr) {
+			out.hitPos.z = std::max(terrainZ, bestTopZ);
+			out.hitActor = winnerRef->GetFormType() == RE::ENUM_FORM_ID::kACHR;
+			if (out.hitActor) {
+				const float pdx2 = winnerRef->data.location.x - playerX;
+				const float pdy2 = winnerRef->data.location.y - playerY;
 				constexpr float kPlayerRadius = 50.0f;
 				out.hitPlayer = (pdx2 * pdx2 + pdy2 * pdy2) < (kPlayerRadius * kPlayerRadius);
 			} else {
-				out.hitActor = false;
 				out.hitPlayer = false;
 			}
+		} else {
+			out.hitPos.z = terrainZ;
+			out.hitActor = false;
+			out.hitPlayer = false;
 		}
 
 		if (PointUnderCellWaterPlane(a_cell, out.hitPos)) {
