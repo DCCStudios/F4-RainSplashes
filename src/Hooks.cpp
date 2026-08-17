@@ -18,7 +18,7 @@ namespace
 		if (g_origRunActorUpdates) {
 			g_origRunActorUpdates(a_list, a_delta, a_instant);
 		}
-		RainSplashes::TickOnMainThread(a_delta);
+		RainSplashes::TickFromActorUpdate(a_delta);
 	}
 }
 

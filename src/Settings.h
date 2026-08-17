@@ -25,7 +25,10 @@ struct GlobalSettings
 	float rainDensityHeavyThreshold{ 9.0f };
 	float rainProxyWetnessScale{ 20.0f };
 	float rainProxyWindScale{ 2.0f };
-	float rainProxyBase{ 5.0f };
+	// Must sit below rainDensityLightThreshold or the Light tier is
+	// unreachable: the proxy is base + wetness/wind terms, so a base at the
+	// light ceiling starts every shower at Medium.
+	float rainProxyBase{ 2.0f };
 };
 
 class Settings

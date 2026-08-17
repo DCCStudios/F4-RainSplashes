@@ -35,23 +35,26 @@ namespace
 		{ 556439,   "RunActorUpdates (hook call site)" },
 		{ 484694,   "Sky::GetSingleton" },
 		{ 384264,   "Main::WorldRootCamera" },
-		{ 434717,   "TESObjectCELL pick / CellPick" },
+		{ 434717,   "TESObjectCELL::Pick (splash surface ray)" },
 		{ 526783,   "bhkPickData ctor" },
 		{ 747470,   "bhkPickData::SetStartEnd" },
-		{ 438299,   "bhkPickData::Reset" },
 		{ 1181584,  "bhkPickData::HasHit" },
 		{ 476687,   "bhkPickData::GetHitFraction" },
-		{ 1288513,  "bhkPickData::GetAllCollectorRayHitSize" },
-		{ 583997,   "bhkPickData::GetAllCollectorRayHitAt" },
-		{ 1274842,  "bhkPickData::SortAllCollectorHits" },
-		{ 863406,   "bhkPickData::GetNiAVObject" },
-		{ 1223055,  "bhkPickData::GetBody" },
 		{ 1225688,  "BSModelDB::Demand (splash mesh load)" },
 		{ 1075623,  "BSTempEffectDebris ctor" },
 		{ 1569706,  "ProcessLists singleton" },
 		{ 445210,   "TESObjectCELL::GetDataX (terrain grid)" },
 		{ 1322816,  "TESObjectCELL::GetDataY (terrain grid)" },
 	};
+
+	// Optional IDs: debug conveniences that must never gate the splash path.
+	// Missing entries only disable their feature (checked via WeatherOk()).
+	constexpr IdName kWeatherOptional[] = {
+		{ 698558,   "Sky::ForceWeather (weather test buttons)" },
+		{ 6511,     "Sky::ResetWeather (weather test buttons)" },
+	};
+
+	static bool g_weatherOk{};
 
 	[[nodiscard]] bool LoadTable()
 	{
@@ -124,9 +127,24 @@ void RelSanity::Init()
 	g_ok = true;
 	logger::info("RainSplashesF4SE: RelSanity: all {} required Address Library IDs resolved",
 		static_cast<unsigned>(sizeof(kRequired) / sizeof(kRequired[0])));
+
+	g_weatherOk = true;
+	for (const auto& row : kWeatherOptional) {
+		if (!HasId(row.id)) {
+			logger::warn(
+				"RainSplashesF4SE: optional Address Library ID missing — {} (0x{:X}); weather test buttons disabled",
+				row.name, row.id);
+			g_weatherOk = false;
+		}
+	}
 }
 
 bool RelSanity::Ok()
 {
 	return g_ok;
+}
+
+bool RelSanity::WeatherOk()
+{
+	return g_ok && g_weatherOk;
 }

@@ -10,9 +10,10 @@ namespace RainSplashes
 	void OnGameDataReady();
 	void OnPostLoadGame();
 
-	// Called from RunActorUpdates hook — lightweight checks only (no Havok).
+	// Called from the RunActorUpdates hook, which may run on a job worker
+	// thread (BSMTAManager) — lightweight form/settings reads only, no Havok.
 	// Raycasts + spawning are deferred to the main thread via AddTask.
-	void TickOnMainThread(float a_delta);
+	void TickFromActorUpdate(float a_delta);
 
 	std::string GetIniPath();
 

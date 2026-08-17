@@ -65,22 +65,19 @@ namespace
 	}
 }
 
-float TerrainHeight::SampleTerrainHeight(
+bool TerrainHeight::TrySampleTerrainHeight(
 	RE::TESObjectCELL* a_cell,
 	float              a_worldX,
 	float              a_worldY,
-	float              a_fallbackZ) noexcept
+	float&             a_outZ) noexcept
 {
 	if (!a_cell || a_cell->IsInterior()) {
-		return a_fallbackZ;
+		return false;
 	}
 
 	auto* land = a_cell->cellLand;
 	if (!land || !land->loadedData) {
-		if (a_cell->worldSpace != nullptr && FloatFinite(a_cell->worldSpace->defaultLandHeight)) {
-			return a_cell->worldSpace->defaultLandHeight;
-		}
-		return a_fallbackZ;
+		return false;
 	}
 
 	const auto* ld = reinterpret_cast<const LoadedLandDataHeightsOnly*>(land->loadedData);
@@ -95,10 +92,7 @@ float TerrainHeight::SampleTerrainHeight(
 	const float ly = a_worldY - cellOriginY;
 
 	if (lx < -0.5f || lx >= kCellWorldSize + 0.5f || ly < -0.5f || ly >= kCellWorldSize + 0.5f) {
-		if (a_cell->worldSpace != nullptr && FloatFinite(a_cell->worldSpace->defaultLandHeight)) {
-			return a_cell->worldSpace->defaultLandHeight;
-		}
-		return a_fallbackZ;
+		return false;
 	}
 
 	const float clampedLx = std::clamp(lx, 0.0f, kCellWorldSize - 1.0e-3f);
@@ -118,11 +112,9 @@ float TerrainHeight::SampleTerrainHeight(
 	const float    h = BilinearQuad(quadHeights, fu, fv);
 
 	if (!FloatFinite(h)) {
-		if (a_cell->worldSpace != nullptr && FloatFinite(a_cell->worldSpace->defaultLandHeight)) {
-			return a_cell->worldSpace->defaultLandHeight;
-		}
-		return a_fallbackZ;
+		return false;
 	}
 
-	return h;
+	a_outZ = h;
+	return true;
 }

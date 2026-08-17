@@ -16,13 +16,27 @@
 #include "WeatherOverrides.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <string>
 
 namespace
 {
 	float SplashTimer = 0.0f;
-	constexpr float kSplashInterval = 0.01f;
+	// Pass cadence + volume caps.  Measured boundaries (2026-08-15): ~700
+	// spawns/sec + ~1200 Havok casts/sec hard-hung the game in ~15 s of rain
+	// (plSize 101→133 in 37 ms and climbing); 40 spawns/sec ran clean.
+	// These caps allow up to ~100 spawns/sec / ~320 casts/sec — still 4-7x
+	// below the known-fatal regime — and the kGlobalEffectCeiling check is
+	// the real guardrail: steady-state live count is rate x lifetime, and
+	// when the global list nears the ceiling, passes skip and throughput
+	// degrades gracefully instead of snowballing.
+	constexpr float         kSplashInterval = 0.05f;   // 20 passes/sec
+	constexpr std::uint32_t kMaxIterationsPerPass = 16;
+	constexpr std::uint32_t kMaxSpawnsPerPass = 5;
+	// Skip a pass entirely while the engine's global temp-effect array is
+	// this large — protects against our own backlog and other mods' storms.
+	constexpr std::uint32_t kGlobalEffectCeiling = 400;
 
 	constexpr std::int8_t kWeatherFlagRainy = 0x04;
 	constexpr int         kWeatherDataTypeOffset = 11;
@@ -113,7 +127,9 @@ namespace
 		bool pushed = RE::ProcessListsShim::PushGlobalEffect(std::move(ptr));
 
 		static std::uint32_t g_spawnLog = 0;
-		if (g_spawnLog < 20) {
+		// First 20 in detail, then a heartbeat every 512 so the log shows
+		// effect-array health right up to any incident.
+		if (g_spawnLog < 20 || (g_spawnLog % 512) == 0) {
 			auto* arr = RE::ProcessListsShim::GetGlobalTempEffects();
 			logger::info(
 				"RainSplashesF4SE: TempEffectDebris #{} at ({:.0f},{:.0f},{:.0f}) "
@@ -125,8 +141,8 @@ namespace
 				init,
 				pushed,
 				arr ? arr->size() : 0u);
-			++g_spawnLog;
 		}
+		++g_spawnLog;
 
 		++g_spawnCount;
 		g_lastModelStatus = std::string("OK(TempEffect): ") + a_nifPath;
@@ -216,8 +232,15 @@ RainSplashes::RainDebugInfo RainSplashes::GetRainDebugInfo()
 	out.thresholdLight = s.global.rainDensityLightThreshold;
 	out.thresholdHeavy = s.global.rainDensityHeavyThreshold;
 	out.coverThreshold = s.global.coverThreshold;
+	// splashActiveCount is a cumulative spawn tally (resets on cell change), not
+	// a live count.  splashPoolTotal now reports the engine's *live* global
+	// temp-effect list size so the UI can show real accumulation vs a leak.
 	out.splashActiveCount = g_spawnCount;
-	out.splashPoolTotal = 0;
+	if (auto* fx = RE::ProcessListsShim::GetGlobalTempEffects()) {
+		out.splashPoolTotal = static_cast<std::uint32_t>(fx->size());
+	} else {
+		out.splashPoolTotal = 0;
+	}
 	out.splashTemplateReady = (g_spawnCount > 0);
 	out.splashTemplateStatus = g_lastModelStatus;
 
@@ -287,7 +310,7 @@ RainSplashes::RainDebugInfo RainSplashes::GetRainDebugInfo()
 	return out;
 }
 
-void RainSplashes::TickOnMainThread(float a_delta)
+void RainSplashes::TickFromActorUpdate(float a_delta)
 {
 	if (!RelSanity::Ok()) {
 		return;
@@ -343,12 +366,6 @@ void RainSplashes::TickOnMainThread(float a_delta)
 		return;
 	}
 
-	const RE::NiPoint3 playerPos{
-		player->data.location.x,
-		player->data.location.y,
-		player->data.location.z
-	};
-
 	if (!tier->splashEnabled) {
 		return;
 	}
@@ -360,7 +377,16 @@ void RainSplashes::TickOnMainThread(float a_delta)
 	}
 	SplashTimer = 0.0f;
 
-	const auto    iterations = tier->rayCastIterations;
+	const auto iterations = std::min(tier->rayCastIterations, kMaxIterationsPerPass);
+	if (tier->rayCastIterations > kMaxIterationsPerPass) {
+		static bool loggedClamp = false;
+		if (!loggedClamp) {
+			logger::info(
+				"RainSplashesF4SE: RaycastIterations {} clamped to {} per pass (per-pass cap since the ray path actually hits now)",
+				tier->rayCastIterations, kMaxIterationsPerPass);
+			loggedClamp = true;
+		}
+	}
 	const float   radius = tier->rayCastRadius;
 	const bool    debugMarker = s.global.debugSplashes;
 	const float   coverThresh = s.global.coverThreshold;
@@ -373,83 +399,131 @@ void RainSplashes::TickOnMainThread(float a_delta)
 		g_loggedSplashPath = true;
 	}
 
-	// CastVerticalCell no longer uses Havok/CellPick — it scans loaded
-	// references for surface height.  Safe to call on any thread.
-	// Only SpawnTempEffect is deferred to the main thread (model loading).
-	for (std::uint32_t i = 0; i < iterations; ++i) {
-		const auto origin = RayCast::RandomPointInDiskAround(radius, playerPos, true);
-		if (!origin) {
-			continue;
-		}
-
-		auto out = RayCast::CastVerticalCell(cell, *origin);
-		if (!out) {
-			continue;
-		}
-		if (out->hitWater) {
-			continue;
-		}
-		if (out->hitPlayer && !s.global.spawnOnPlayer) {
-			continue;
-		}
-		if (out->hitActor && !out->hitPlayer && !s.global.spawnOnActors) {
-			continue;
-		}
-
-		static bool g_loggedFirstHit = false;
-		if (!g_loggedFirstHit) {
-			logger::info(
-				"RainSplashesF4SE: first hit — pos=({:.0f},{:.0f},{:.0f}) player=({:.0f},{:.0f},{:.0f})",
-				out->hitPos.x, out->hitPos.y, out->hitPos.z,
-				playerPos.x, playerPos.y, playerPos.z);
-			g_loggedFirstHit = true;
-		}
-
-		const float dzCover = std::fabs(out->hitPos.z - playerPos.z);
-		if (dzCover > coverThresh) {
-			static std::uint32_t g_coverDrops = 0;
-			if (g_coverDrops < 10) {
-				logger::info("RainSplashesF4SE: cover-filtered dz={:.0f} thresh={:.0f} hitZ={:.0f} playerZ={:.0f}",
-					dzCover, coverThresh, out->hitPos.z, playerPos.z);
-				++g_coverDrops;
-			}
-			continue;
-		}
-
-		std::string nifPathStr;
-		float       scale;
-		if (debugMarker) {
-			nifPathStr = "MarkerX.nif";
-			scale = 1.0f;
-		} else {
-			static auto stripMeshesPrefix = [](const std::string& p) -> std::string {
-				if (p.size() > 7) {
-					auto prefix = p.substr(0, 7);
-					for (auto& c : prefix) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-					if (prefix == "meshes\\" || prefix == "meshes/") {
-						return p.substr(7);
-					}
-				}
-				return p;
-			};
-			nifPathStr = stripMeshesPrefix(out->hitActor ? tier->splashNifActor : tier->splashNif);
-			scale = out->hitActor ? tier->splashNifScaleActor : tier->splashNifScale;
-		}
-
-		RE::NiPoint3  capturedPos    = out->hitPos;
-		RE::NiMatrix3 capturedNormal = out->normal;
-		float         capturedScale  = scale;
-		float         capturedLife   = life;
-
-		auto* taskIface = F4SE::GetTaskInterface();
-		if (taskIface) {
-			taskIface->AddTask([=]() {
-				auto* player2 = RE::PlayerCharacter::GetSingleton();
-				if (!player2) return;
-				auto* cell2 = player2->GetParentCell();
-				if (!cell2 || cell2->IsInterior()) return;
-				(void)SpawnTempEffect(cell2, capturedPos, capturedNormal, capturedScale, nifPathStr.c_str(), capturedLife);
-			});
-		}
+	// THREADING (hard-learned, twice): this tick runs inside the
+	// RunActorUpdates hook, which with BSMTAManager / HighFPSPhysicsFix can
+	// execute on a job worker thread — NOT the main thread.  The pre-rewrite
+	// code dropped Havok/CellPick from this path for exactly that reason.
+	// Havok queries racing the physics step from a worker thread corrupt
+	// engine state (2026-08-15: ragdoll updateConstraints crash on a physics
+	// job thread, 13 min into a rain session).  So the ENTIRE cast+spawn
+	// pass is deferred to the F4SE task queue, which runs on the true main
+	// thread at a safe point in the frame; this hook thread only reads
+	// forms/settings, as the old scan-based code did.
+	auto* taskIface = F4SE::GetTaskInterface();
+	if (!taskIface) {
+		return;
 	}
+	static std::atomic<bool> s_castPassQueued{ false };
+	bool                     expected = false;
+	if (!s_castPassQueued.compare_exchange_strong(expected, true)) {
+		return;  // previous pass not executed yet — don't pile up tasks
+	}
+
+	const RayCast::Options castOpts{
+		.acceptActors = s.global.spawnOnActors,
+		.acceptPlayer = s.global.spawnOnPlayer
+	};
+	// Copies, not references: the task may run after a UI-driven settings edit.
+	const std::string nifWorld = tier->splashNif;
+	const std::string nifActor = tier->splashNifActor;
+	const float       scaleWorld = tier->splashNifScale;
+	const float       scaleActor = tier->splashNifScaleActor;
+
+	taskIface->AddTask([=]() {
+		s_castPassQueued.store(false);
+
+		// Backpressure: if the engine's global temp-effect list is already
+		// huge (our backlog, vanilla storm FX, other mods), sit this pass out.
+		if (auto* fx = RE::ProcessListsShim::GetGlobalTempEffects();
+			fx && fx->size() > kGlobalEffectCeiling) {
+			static std::uint32_t g_ceilingSkips = 0;
+			if (g_ceilingSkips < 5) {
+				logger::warn("RainSplashesF4SE: skipping splash pass — global temp effects at {} (> {})",
+					fx->size(), kGlobalEffectCeiling);
+				++g_ceilingSkips;
+			}
+			return;
+		}
+
+		auto* player2 = RE::PlayerCharacter::GetSingleton();
+		if (!player2) {
+			return;
+		}
+		auto* cell2 = player2->GetParentCell();
+		if (!cell2 || cell2->IsInterior()) {
+			return;
+		}
+		const RE::NiPoint3 playerPos2{
+			player2->data.location.x,
+			player2->data.location.y,
+			player2->data.location.z
+		};
+
+		static auto stripMeshesPrefix = [](const std::string& p) -> std::string {
+			if (p.size() > 7) {
+				auto prefix = p.substr(0, 7);
+				for (auto& c : prefix) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+				if (prefix == "meshes\\" || prefix == "meshes/") {
+					return p.substr(7);
+				}
+			}
+			return p;
+		};
+
+		std::uint32_t spawnedThisPass = 0;
+		for (std::uint32_t i = 0; i < iterations && spawnedThisPass < kMaxSpawnsPerPass; ++i) {
+			const auto origin = RayCast::RandomPointInDiskAround(radius, playerPos2, true);
+			if (!origin) {
+				continue;
+			}
+
+			auto out = RayCast::CastVerticalCell(cell2, *origin, castOpts);
+			if (!out) {
+				continue;
+			}
+			if (out->hitWater) {
+				continue;
+			}
+
+			static bool g_loggedFirstHit = false;
+			if (!g_loggedFirstHit) {
+				logger::info(
+					"RainSplashesF4SE: first hit — pos=({:.0f},{:.0f},{:.0f}) layer={} player=({:.0f},{:.0f},{:.0f})",
+					out->hitPos.x, out->hitPos.y, out->hitPos.z,
+					RE::CollisionLayerToString(out->layer),
+					playerPos2.x, playerPos2.y, playerPos2.z);
+				g_loggedFirstHit = true;
+			}
+
+			// Cover: reject strikes far from the player in Z (e.g. building roof
+			// while walking below).  Terrain-layer / heightmap hits skip this —
+			// slopes legitimately put ground far above/below the player.
+			if (out->hitRefContributesZ) {
+				const float dzCover = std::fabs(out->hitPos.z - playerPos2.z);
+				if (dzCover > coverThresh) {
+					static std::uint32_t g_coverDrops = 0;
+					if (g_coverDrops < 10) {
+						logger::info("RainSplashesF4SE: cover-filtered dz={:.0f} thresh={:.0f} hitZ={:.0f} playerZ={:.0f}",
+							dzCover, coverThresh, out->hitPos.z, playerPos2.z);
+						++g_coverDrops;
+					}
+					continue;
+				}
+			}
+
+			std::string nifPathStr;
+			float       scale;
+			if (debugMarker) {
+				nifPathStr = "MarkerX.nif";
+				scale = 1.0f;
+			} else {
+				nifPathStr = stripMeshesPrefix(out->hitActor ? nifActor : nifWorld);
+				scale = out->hitActor ? scaleActor : scaleWorld;
+			}
+
+			if (SpawnTempEffect(cell2, out->hitPos, out->rotation, scale, nifPathStr.c_str(), life)) {
+				++spawnedThisPass;
+			}
+		}
+	});
 }

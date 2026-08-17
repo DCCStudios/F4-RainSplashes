@@ -7,4 +7,8 @@ namespace RelSanity
 	void Init();
 
 	[[nodiscard]] bool Ok();
+
+	// Ok() plus the optional weather-test-button IDs (Sky::ForceWeather /
+	// ResetWeather).  False only disables those buttons, never the splashes.
+	[[nodiscard]] bool WeatherOk();
 }

@@ -8,6 +8,10 @@
 #include "Settings.h"
 #include "WeatherOverrides.h"
 
+#include "F4SE/API.h"
+#include "RE/Bethesda/TESForms.h"
+#include "shim/SkyShim.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -366,6 +370,88 @@ namespace
 		ImGuiMCP::EndChild();
 	}
 
+	// ── Vanilla weather test buttons ─────────────────────────────────────
+
+	struct TestWeatherDef
+	{
+		const char*   label;
+		std::uint32_t formID;  // Fallout4.esm (always load index 00)
+		const char*   editorID;
+	};
+
+	// FormIDs / EditorIDs verified against Fallout4.esm WTHR records.
+	constexpr TestWeatherDef kTestWeathers[] = {
+		{ "Heavy rain",    0x001CA7E4, "CommonwealthRain" },
+		{ "Light rain",    0x001CD096, "CommonwealthMistyRainy" },
+		{ "Partly cloudy", 0x001E5E60, "CommonwealthDarkSkies" },
+		{ "Overcast",      0x001C8556, "CommonwealthOvercast" },
+	};
+
+	void ForceTestWeather(std::uint32_t a_formID, const char* a_editorID)
+	{
+		auto* task = F4SE::GetTaskInterface();
+		if (!task || !RelSanity::WeatherOk()) {
+			return;
+		}
+		const std::string edid = a_editorID;
+		task->AddTask([a_formID, edid]() {
+			auto* sky = RE::Sky::GetSingleton();
+			if (!sky) {
+				return;
+			}
+			auto* weather = RE::TESForm::GetFormByID<RE::TESWeather>(a_formID);
+			if (!weather) {
+				logger::warn("RainSplashesF4SE: test weather {} [{:08X}] not found", edid, a_formID);
+				return;
+			}
+			sky->ForceWeather(weather, true);
+			logger::info("RainSplashesF4SE: forced weather {} [{:08X}]", edid, a_formID);
+		});
+	}
+
+	void ResetTestWeather()
+	{
+		auto* task = F4SE::GetTaskInterface();
+		if (!task || !RelSanity::WeatherOk()) {
+			return;
+		}
+		task->AddTask([]() {
+			if (auto* sky = RE::Sky::GetSingleton()) {
+				sky->ResetWeather();
+				logger::info("RainSplashesF4SE: reset to natural weather");
+			}
+		});
+	}
+
+	void DrawWeatherTestButtons()
+	{
+		ImGuiMCP::Separator();
+		if (!RelSanity::WeatherOk()) {
+			ImGuiMCP::TextDisabled("Weather test buttons unavailable (Address Library IDs missing).");
+			return;
+		}
+		ImGuiMCP::TextWrapped("Trigger vanilla weather (blends in over a few seconds):");
+		for (std::size_t i = 0; i < std::size(kTestWeathers); ++i) {
+			const auto& def = kTestWeathers[i];
+			if (i > 0) {
+				ImGuiMCP::SameLine();
+			}
+			if (ImGuiMCP::Button(def.label)) {
+				ForceTestWeather(def.formID, def.editorID);
+			}
+			if (ImGuiMCP::IsItemHovered()) {
+				ImGuiMCP::SetTooltip("%s [%08X] — set as override weather", def.editorID, static_cast<unsigned>(def.formID));
+			}
+		}
+		ImGuiMCP::SameLine();
+		if (ImGuiMCP::Button("Natural weather")) {
+			ResetTestWeather();
+		}
+		if (ImGuiMCP::IsItemHovered()) {
+			ImGuiMCP::SetTooltip("Clear the forced weather and return to the region's natural cycle.");
+		}
+	}
+
 	// ── Live debug page ──────────────────────────────────────────────────
 
 	void __stdcall DrawDebugPage()
@@ -416,6 +502,8 @@ namespace
 				d.overrideWeatherFormID);
 		}
 
+		DrawWeatherTestButtons();
+
 		// Rain result
 		ImGuiMCP::Separator();
 		ImGuiMCP::Text("Intensity proxy: %.2f", d.proxyDensity);
@@ -427,7 +515,13 @@ namespace
 
 		ImGuiMCP::Separator();
 		ImGuiMCP::Text("Splashes (BSModelDB + cell scene):");
-		ImGuiMCP::Text("  Active: %u    Pool: %u", d.splashActiveCount, d.splashPoolTotal);
+		ImGuiMCP::Text("  Spawned this cell: %u (cumulative)", d.splashActiveCount);
+		ImGuiMCP::Text("  Live temp effects (engine-wide): %u", d.splashPoolTotal);
+		if (ImGuiMCP::IsItemHovered()) {
+			ImGuiMCP::SetTooltip(
+				"Live count includes all mods' temp effects, not just ours. Bounded "
+				"(~spawn rate x lifetime) = healthy; only unbounded growth is a leak.");
+		}
 		ImGuiMCP::Text("  Proto loaded: %s", d.splashTemplateReady ? "yes" : "no");
 		if (!d.splashTemplateStatus.empty()) {
 			ImGuiMCP::TextWrapped("  Status: %s", d.splashTemplateStatus.c_str());
